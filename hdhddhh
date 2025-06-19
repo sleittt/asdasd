@@ -1,0 +1,147 @@
+#start=thermometer.exe#
+#start=led_display.exe#
+#start=stepper_motor.exe#
+
+.model small
+.stack 100h
+
+.data
+    ; Данные для вращения по часовой стрелке (полный шаг)
+    datcw    db 0000_0001b
+             db 0000_0011b    
+             db 0000_0110b
+             db 0000_0100b
+
+    ; Данные для вращения против часовой стрелки (полный шаг)
+    datccw   db 0000_0100b
+             db 0000_0110b    
+             db 0000_0011b
+             db 0000_0001b
+
+    current_dir dw offset datcw  ; Текущее направление (указатель на данные)
+    step_index db 0              ; Текущий индекс шага (0-3)
+    last_temp db 0               ; Последняя измеренная температура
+    delay_time dw 2000           ; Начальная задержка
+
+.code
+start:
+    mov ax, @data
+    mov ds, ax
+
+main_loop:
+    ; Считываем температуру с термометра (порт 125)
+    in al, 125
+    mov last_temp, al            ; Сохраняем температуру
+    
+    ; Отправляем температуру на LED-дисплей (порт 199)
+    out 199, al
+    
+    ; Определяем направление вращения в зависимости от температуры:
+    cmp al, 60
+    jl rotate_cw                ; Температура < 60 → CW
+    
+    cmp al, 80
+    jg rotate_ccw               ; Температура > 80 → CCW
+    
+    ; Температура 60-80 → остановка
+    jmp delay_only
+
+rotate_cw:
+    mov current_dir, offset datcw
+    jmp control_speed
+
+rotate_ccw:
+    mov current_dir, offset datccw
+
+control_speed:
+    ; Регулируем скорость в зависимости от отклонения от порогов
+    cmp al, 60
+    jl calc_cw_speed
+    
+    ; Расчет скорости для CCW: (температура - 80)
+    sub al, 80
+    jmp set_speed
+
+calc_cw_speed:
+    ; Расчет скорости для CW: (60 - температура)
+    mov ah, 60
+    sub ah, al
+    mov al, ah
+
+set_speed:
+    ; Преобразуем отклонение в задержку
+    xor ah, ah
+    mov bx, 20                  ; Коэффициент чувствительности
+    mul bx                      ; AX = AL * BL
+    
+    ; Базовое время задержки - отклонение
+    mov bx, 5000                ; Базовая задержка
+    sub bx, ax
+    
+    ; Ограничение минимальной задержки
+    cmp bx, 100
+    ja delay_ok
+    mov bx, 100
+delay_ok:
+    mov delay_time, bx
+
+    ; Выполняем шаг двигателя
+    call do_step
+    jmp apply_delay
+
+delay_only:
+    ; Пауза при температуре в диапазоне 60-80
+    mov delay_time, 5000
+
+apply_delay:
+    ; Применяем вычисленную задержку
+    mov cx, delay_time
+    call delay
+    jmp main_loop
+
+; Процедура выполнения одного шага двигателя
+do_step proc
+    push ax
+    push bx
+    push si
+    
+    ; Ожидаем готовности двигателя
+    wait_ready:
+        in al, 7
+        test al, 10000000b     ; Проверяем бит готовности
+        jz wait_ready
+    
+    ; Получаем текущий шаг
+    mov si, current_dir
+    mov bl, step_index
+    xor bh, bh
+    mov al, [si + bx]
+    
+    ; Отправляем команду на двигатель
+    out 7, al
+    
+    ; Переходим к следующему шагу
+    inc step_index
+    cmp step_index, 4
+    jb step_done
+    mov step_index, 0
+    
+    step_done:
+    pop si
+    pop bx
+    pop ax
+    ret
+do_step endp
+
+; Процедура задержки (CX = количество итераций)
+delay proc
+    delay_loop:
+        nop
+        nop
+        nop
+        nop
+        loop delay_loop
+    ret
+delay endp
+
+end start
