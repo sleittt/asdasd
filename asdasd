@@ -1,0 +1,136 @@
+; this short program for emu8086 shows how to keep constant temperature
+; using heater and thermometer (between 60° to 80°),
+; it is assumed that air temperature is lower 60°.
+
+; thermometer.exe is started automatically from c:\emu8086\devices.
+; it is also accessible from the "virtual devices" menu of the emulator.
+
+#start=thermometer.exe#
+#start=led_display.exe#
+
+; temperature rises fast, thus emulator should be set to run at the maximum speed.
+
+; if closed, the thermometer window can be re-opened from emulator's "virtual devices" menu.
+
+
+
+#make_bin#
+
+name "thermo"
+
+; set data segment to code segment:
+mov ax, cs
+mov ds, ax
+
+start:
+
+in al, 125
+out 199,al
+
+cmp al, 60
+jl  low
+
+cmp al, 80
+jle  ok
+jg   high
+
+low:
+mov al, 1
+out 127, al   ; turn heater "on".
+jmp ok
+
+high:
+mov al, 0
+out 127, al   ; turn heater "off". 
+
+ok:
+jmp start   ; endless loop.
+
+---------
+
+
+
+; this is an example of out instruction.
+; it writes values to virtual i/o port
+; that controls the stepper-motor.
+; c:\emu8086\devices\stepper_motor.exe is on port 7
+
+#start=stepper_motor.exe#
+
+
+name "stepper"
+
+#make_bin#
+
+steps_before_direction_change = 20h ; 32 (decimal)
+
+jmp start
+
+; ========= data ===============
+
+; bin data for clock-wise
+; half-step rotation:
+datcw    db 0000_0110b
+         db 0000_0100b    
+         db 0000_0011b
+         db 0000_0010b
+
+; bin data for counter-clock-wise
+; half-step rotation:
+datccw   db 0000_0011b
+         db 0000_0001b    
+         db 0000_0110b
+         db 0000_0010b
+
+
+; bin data for clock-wise
+; full-step rotation:
+datcw_fs db 0000_0001b
+         db 0000_0011b    
+         db 0000_0110b
+         db 0000_0000b
+
+; bin data for counter-clock-wise
+; full-step rotation:
+datccw_fs db 0000_0100b
+          db 0000_0110b    
+          db 0000_0011b
+          db 0000_0000b
+
+
+start:
+mov bx, offset datcw ; start from clock-wise half-step.
+mov si, 0
+mov cx, 0 ; step counter
+
+next_step:
+; motor sets top bit when it's ready to accept new command
+wait:   in al, 7     
+        test al, 10000000b
+        jz wait
+
+mov al, [bx][si]
+out 7, al
+
+inc si
+
+cmp si, 4
+jb next_step
+mov si, 0
+
+inc cx
+cmp cx, steps_before_direction_change
+jb  next_step
+
+mov cx, 0
+add bx, 4 ; next bin data
+
+cmp bx, offset datccw_fs
+jbe next_step
+
+mov bx, offset datcw ; return to clock-wise half-step.
+
+jmp next_step
+
+
+
